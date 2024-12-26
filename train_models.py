@@ -27,7 +27,23 @@ def create_train_test_split(X, y, test_size=0.2, random_state=42):
     return train_test_split(X, y, test_size=test_size, random_state=random_state)
 
 def evaluate_model(y_true, y_pred, model_name):
-    """Calculate and print regression metrics."""
+    """
+    Model performansını değerlendirir ve metrikleri hesaplar.
+    
+    Hesaplanan metrikler:
+    - MSE (Ortalama Kare Hata)
+    - RMSE (Kök Ortalama Kare Hata)
+    - MAE (Ortalama Mutlak Hata)
+    - R² Skoru
+    
+    Args:
+        y_true (np.ndarray): Gerçek koordinatlar
+        y_pred (np.ndarray): Tahmin edilen koordinatlar
+        model_name (str): Model adı
+        
+    Returns:
+        dict: Performans metrikleri
+    """
     mse = mean_squared_error(y_true, y_pred)
     rmse = np.sqrt(mse)
     mae = mean_absolute_error(y_true, y_pred)

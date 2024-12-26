@@ -122,7 +122,25 @@ def save_temporal_data(csi_data_list):
     print(f"Phase shape: {phase.shape}")
 
 def process_dataset(base_dir):
-    """Process entire dataset and prepare for training."""
+    """
+    Veri setini işleyerek eğitim için hazırlar.
+    
+    Bu fonksiyon şu adımları gerçekleştirir:
+    1. CSI verilerini yükler
+    2. Özellik çıkarımı yapar
+    3. Koordinat verilerini normalleştirir
+    4. İşlenmiş verileri kaydeder
+    
+    Args:
+        base_dir (str): Ham CSI verilerinin bulunduğu dizin
+        
+    Returns:
+        None: İşlenmiş veriler 'preprocessed/' dizinine kaydedilir
+        
+    Raises:
+        FileNotFoundError: Veri dizini bulunamazsa
+        ValueError: Veri formatı geçersizse
+    """
     features_list = []  # Statistical Features
     coordinates_list = []  # Coordinates
     csi_data_list = []  # Raw CSI data for temporal analysis
