@@ -1,0 +1,55 @@
+CSI Dataset Feature Information
+============================
+
+n_features: 1080
+n_samples: 317
+feature_names:
+  0: antenna1_amp_mean
+  1: antenna1_amp_std
+  2: antenna1_amp_max
+  3: antenna1_amp_min
+  4: antenna1_amp_median
+  5: antenna1_amp_q25
+  6: antenna1_amp_q75
+  7: antenna1_phase_mean
+  8: antenna1_phase_std
+  9: antenna1_phase_max
+  10: antenna1_phase_min
+  11: antenna1_phase_median
+  12: antenna1_phase_q25
+  13: antenna1_phase_q75
+  14: antenna2_amp_mean
+  15: antenna2_amp_std
+  16: antenna2_amp_max
+  17: antenna2_amp_min
+  18: antenna2_amp_median
+  19: antenna2_amp_q25
+  20: antenna2_amp_q75
+  21: antenna2_phase_mean
+  22: antenna2_phase_std
+  23: antenna2_phase_max
+  24: antenna2_phase_min
+  25: antenna2_phase_median
+  26: antenna2_phase_q25
+  27: antenna2_phase_q75
+  28: antenna3_amp_mean
+  29: antenna3_amp_std
+  30: antenna3_amp_max
+  31: antenna3_amp_min
+  32: antenna3_amp_median
+  33: antenna3_amp_q25
+  34: antenna3_amp_q75
+  35: antenna3_phase_mean
+  36: antenna3_phase_std
+  37: antenna3_phase_max
+  38: antenna3_phase_min
+  39: antenna3_phase_median
+  40: antenna3_phase_q25
+  41: antenna3_phase_q75
+
+Feature Statistics (before scaling):
+--------------------------------
+Mean: 10.616785
+Std: 11.617436
+Min: -6.169954
+Max: 43.082464
