@@ -30,7 +30,17 @@ Bu proje, WiFi Kanal Durum Bilgisi (CSI - Channel State Information) verilerini 
 - 3 anten/alıcı
 - Her anten için 30 alt taşıyıcı
 - Her ölçüm için 1500 örnek
-- Kompleks değerli veriler (gerçek + sanal kısım)
+- CSI verileri sanal (imaginary) kısım olarak kaydedilmiş
+
+#### 2.1.1 Veri Dizin Yapısı
+- `imaginary_part/`: CSI ölçüm verilerinin sanal kısmını içerir
+- `coordinate X-Y/`: Gerçek konum etiketlerini (metre cinsinden) içeren dizinler
+  * X ve Y, dosya aralığını belirtir (örn: coordinate 1-100)
+  * Her dosya, belirli bir konumdaki ölçümleri içerir
+  * Koordinat değerleri metre cinsindendir
+
+#### 2.1.2 Verisetin Gerçek (Real) CSI Parçası
+Veri seti analizi sırasında, Meeting Room Dataset, Lab Dataset ve miniLab dizinlerinde gerçek (real) CSI verilerinin bulunmadığı tespit edilmiştir. Tüm CSI ölçümleri sanal (imaginary) kısım olarak kaydedilmiştir. "coordinate" dizinleri, CSI verilerinin gerçek kısmını değil, ölçüm yapılan konumların fiziksel koordinatlarını içermektedir.
 
 ### 2.2 Sinyal Özellikleri
 Genlik (Amplitude) Özellikleri:
@@ -138,26 +148,50 @@ Zamansal özellikleri kullanarak:
 ## 5. Sonuçlar ve Değerlendirme
 
 ### 5.1 Model Performansları
-Ortalama metrikler:
-- RMSE: 2-3 metre
-- MAE: 1.5-2.5 metre
-- R² Skoru: -0.02 ile -0.12 arası
+
+#### 5.1.1 Hata Ölçümü ve Birimler
+RMSE (Metre): Eğer test koordinatı (X_gerçek, Y_gerçek) ve tahmin edilen koordinat (X_tahmin, Y_tahmin) ise:
+
+RMSE = sqrt( mean( (X_gerçek - X_tahmin)² + (Y_gerçek - Y_tahmin)² ) )
+
+Koordinatlar metre cinsinden olduğundan, RMSE değeri de metre cinsindendir. Bu, modelin tahmin hatalarının doğrudan fiziksel mesafe olarak yorumlanabileceği anlamına gelir.
+
+#### 5.1.2 Model Metrikleri
+Elde edilen metrikler:
+- Random Forest:
+  * RMSE: 0.9811 metre
+  * MAE: 0.7293 metre
+  * R² Skoru: 0.0392
+
+- Gradient Boosting:
+  * RMSE: 0.9761
+  * MAE: 0.7310
+  * R² Skoru: 0.0498
+
+- Sinir Ağı:
+  * RMSE: 1.1359
+  * MAE: 0.8647
+  * R² Skoru: -0.2876
 
 ### 5.2 Model Karşılaştırması
 1. Random Forest:
-   - En tutarlı sonuçlar
-   - Merkezi alanlarda 2m altı hata
-   - Düşük varyans
+   - Tüm modeller arasında en tutarlı sonuçlar
+   - R² skoru pozitif ancak düşük (0.0392)
+   - En düşük MAE değeri (0.7293)
+   - Tahminlerde düşük varyans
 
 2. Gradient Boosting:
-   - Random Forest'a yakın performans
-   - Bazı bölgelerde daha iyi sonuçlar
-   - Orta düzey varyans
+   - Random Forest'a çok yakın performans
+   - En iyi R² skoru (0.0498)
+   - MAE değeri 0.7310
+   - Orta düzey tahmin varyansı
 
 3. Sinir Ağı:
-   - Karmaşık örüntülerde iyi
-   - Yüksek varyans
-   - Eğitim verisi dağılımına hassas
+   - En kötü performans gösteren model
+   - Negatif R² skoru (-0.2876)
+   - En yüksek hata değerleri (RMSE: 1.1359)
+   - Yüksek tahmin varyansı
+   - Aşırı öğrenme belirtileri
 
 4. LSTM:
    - Hareket tahmininde başarılı
@@ -165,9 +199,13 @@ Ortalama metrikler:
    - Zamansal ilişkileri yakalama
 
 ### 5.3 Hata Analizi
-- Duvar/köşe yakınlarında daha yüksek hata
-- Merkezi alanlarda daha düşük hata
-- Bazı bölgelerde sistematik sapmalar
+- Tüm modellerde beklenenden düşük performans
+- PCA boyut indirgeme sonrası varyans kaybı (%46.41)
+- Özellik mühendisliği sürecinde bilgi kaybı
+- Koordinat tahminlerinde yüksek sapma
+- 2B görselleştirmelerde belirgin tahmin hataları
+- Modellerin tahmin yeteneklerinde ciddi sınırlamalar
+- Özellikle sinir ağında aşırı öğrenme sorunları
 
 ## 6. Gelecek Çalışmalar
 
@@ -189,7 +227,16 @@ Ortalama metrikler:
 ## Ekler
 
 ### Ek-1: Örnek Görselleştirmeler
-[Görselleştirmeler model_results/ dizininde bulunmaktadır]
+Model tahminlerinin 2B görselleştirmeleri:
+- random_forest_2d.png: Random Forest modelinin tahmin sonuçları
+- gradient_boosting_2d.png: Gradient Boosting modelinin tahmin sonuçları
+- neural_network_2d.png: Sinir Ağı modelinin tahmin sonuçları
+
+Her görselleştirmede:
+- Mavi noktalar: Gerçek konumlar
+- Kırmızı noktalar: Tahmin edilen konumlar
+- Gri çizgiler: Tahmin hatası mesafesi
+- Sağ üst köşe: Model performans metrikleri (RMSE, MAE, R²)
 
 ### Ek-2: Performans Grafikleri
 [Detaylı performans grafikleri docs/figures/ dizininde bulunmaktadır]
