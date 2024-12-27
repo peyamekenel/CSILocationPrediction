@@ -1,3 +1,19 @@
+# WiFi CSI Verileri ile İç Mekan Konum Tahmini
+
+Bu proje, WiFi Kanal Durum Bilgisi (CSI) verilerini kullanarak iç mekan konum tahmini için makine öğrenmesi modelleri uygulamaktadır. Sistem, geleneksel regresyon modellerini ve derin öğrenme yaklaşımlarını kullanarak iç mekanlarda X, Y koordinatlarını tahmin eder.
+
+## Proje Hakkında
+
+Bu sistem şu özelliklere sahiptir:
+1. CSI verilerinden özellik çıkarımı
+2. Çoklu model desteği (Random Forest, Gradient Boosting, Neural Network, LSTM)
+3. Kapsamlı performans analizi
+4. Görselleştirme araçları
+
+English version follows below:
+
+---
+
 # Indoor Location Prediction using WiFi CSI Data
 
 This project implements machine learning models for indoor location prediction using WiFi Channel State Information (CSI) data. The system predicts X, Y coordinates in an indoor environment using various machine learning approaches, including traditional regression models and deep learning.
