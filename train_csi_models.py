@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from scipy.stats import skew, kurtosis
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -239,7 +240,8 @@ def load_and_preprocess_data(features_path: str, location_info_path: str = "loca
     
     # Log zone distribution with enhanced statistics
     logger.info("\nZone distribution:")
-    for zone in range(n_zones):
+    unique_zones = np.unique(room_zones)
+    for zone in unique_zones:
         zone_mask = room_zones == zone
         zone_rooms = room_numbers[zone_mask]
         unique_zone_rooms = np.unique(zone_rooms)
@@ -261,24 +263,58 @@ def load_and_preprocess_data(features_path: str, location_info_path: str = "loca
             room_count = np.sum((room_zones == zone) & (room_numbers == room))
             logger.info(f"    Room {room}: {room_count} samples")
     
-    # Add zone information to features with reduced dimensionality
-    zone_features = np.zeros((len(room_numbers), n_zones))
+    # Enhanced zone-based feature engineering
+    # One-hot encoded zone features
+    n_actual_zones = len(np.unique(room_zones))
+    zone_features = np.zeros((len(room_numbers), n_actual_zones))
     zone_features[np.arange(len(room_numbers)), room_zones] = 1
     
-    # Advanced features
-    # Subcarrier correlation (between adjacent subcarriers)
+    # Zone-specific statistics
+    zone_x_means = np.zeros(len(room_numbers))
+    zone_y_means = np.zeros(len(room_numbers))
+    zone_distances = np.zeros(len(room_numbers))
+    
+    for zone in range(n_zones):
+        zone_mask = room_zones == zone
+        if np.sum(zone_mask) > 0:
+            zone_x_means[zone_mask] = np.mean(coordinates[zone_mask, 0])
+            zone_y_means[zone_mask] = np.mean(coordinates[zone_mask, 1])
+            # Distance to zone centroid
+            centroid = np.array([zone_x_means[zone_mask][0], zone_y_means[zone_mask][0]])
+            zone_distances[zone_mask] = np.sqrt(
+                np.sum((coordinates[zone_mask] - centroid) ** 2, axis=1)
+            )
+    
+    # Advanced CSI features
+    # Subcarrier correlation with enhanced noise handling
     mag_corr = np.zeros((magnitudes.shape[0], magnitudes.shape[2]-1))
     phase_corr = np.zeros((phases.shape[0], phases.shape[2]-1))
+    
+    # Add zone-aware correlation features with improved numerical stability
+    n_actual_zones = len(np.unique(room_zones))
+    zone_mag_corr = np.zeros((magnitudes.shape[0], n_actual_zones))
+    zone_phase_corr = np.zeros((phases.shape[0], n_actual_zones))
+    
+    def safe_corrcoef(x, y, eps=1e-8):
+        """Calculate correlation coefficient with numerical stability."""
+        x_std = np.std(x)
+        y_std = np.std(y)
+        
+        if x_std < eps or y_std < eps:
+            return 0.0
+            
+        x_norm = (x - np.mean(x)) / (x_std + eps)
+        y_norm = (y - np.mean(y)) / (y_std + eps)
+        
+        corr = np.mean(x_norm * y_norm)
+        return max(min(corr, 1.0), -1.0)  # Clip to valid range
     
     for i in range(magnitudes.shape[0]):
         for j in range(magnitudes.shape[2]-1):
             try:
-                # Handle potential NaN values in correlation calculation
-                mag_corr_matrix = np.corrcoef(magnitudes[i,:,j], magnitudes[i,:,j+1])
-                phase_corr_matrix = np.corrcoef(phases[i,:,j], phases[i,:,j+1])
-                
-                mag_corr[i,j] = 0.0 if np.isnan(mag_corr_matrix[0,1]) else mag_corr_matrix[0,1]
-                phase_corr[i,j] = 0.0 if np.isnan(phase_corr_matrix[0,1]) else phase_corr_matrix[0,1]
+                # Use numerically stable correlation calculation
+                mag_corr[i,j] = safe_corrcoef(magnitudes[i,:,j], magnitudes[i,:,j+1])
+                phase_corr[i,j] = safe_corrcoef(phases[i,:,j], phases[i,:,j+1])
             except Exception as e:
                 logger.warning(f"Error calculating correlation for sample {i}, subcarrier {j}: {str(e)}")
                 mag_corr[i,j] = 0.0
@@ -298,18 +334,70 @@ def load_and_preprocess_data(features_path: str, location_info_path: str = "loca
     mag_ratio_mean = np.mean(mag_ratio, axis=1)
     mag_ratio_std = np.std(mag_ratio, axis=1)
     
-    # Combine all features with enhanced CSI statistics and zone information
+    # Calculate zone-specific correlations
+    for zone in range(n_zones):
+        zone_mask = room_zones == zone
+        if np.sum(zone_mask) > 0:
+            zone_mag = magnitudes[zone_mask]
+            zone_phase = phases[zone_mask]
+            
+            # Average correlation within zone
+            zone_mag_corr[zone_mask, zone] = np.mean(
+                [np.corrcoef(m)[0,1] for m in zone_mag if len(m) > 1]
+            )
+            zone_phase_corr[zone_mask, zone] = np.mean(
+                [np.corrcoef(p)[0,1] for p in zone_phase if len(p) > 1]
+            )
+    
+    # Calculate frequency domain features
+    freq_features = np.fft.fft(magnitudes, axis=1)
+    freq_mag = np.abs(freq_features)
+    freq_mean = np.mean(freq_mag, axis=1)
+    freq_std = np.std(freq_mag, axis=1)
+    freq_max = np.max(freq_mag, axis=1)
+    
+    # Higher-order statistics
+    mag_kurtosis = kurtosis(magnitudes, axis=1)
+    phase_kurtosis = kurtosis(unwrapped_phases, axis=1)
+    mag_rms = np.sqrt(np.mean(np.square(magnitudes), axis=1))
+    mag_peak_to_peak = np.max(magnitudes, axis=1) - np.min(magnitudes, axis=1)
+    
+    # Subcarrier group statistics (divide subcarriers into 4 groups)
+    n_subcarriers = magnitudes.shape[2]
+    group_size = n_subcarriers // 4
+    mag_group_means = np.array([
+        np.mean(magnitudes[:, :, i:i+group_size], axis=(1,2))
+        for i in range(0, n_subcarriers, group_size)
+    ]).T
+    phase_group_means = np.array([
+        np.mean(unwrapped_phases[:, :, i:i+group_size], axis=(1,2))
+        for i in range(0, n_subcarriers, group_size)
+    ]).T
+    
+    # Combine all features with enhanced zone-aware features
     X = np.hstack([
         # Enhanced CSI magnitude statistics
         mag_mean, mag_std, mag_max, mag_min, mag_median, mag_skew,
+        mag_kurtosis, mag_rms, mag_peak_to_peak,
         # Enhanced CSI phase statistics
         phase_mean, phase_std, phase_max, phase_min, phase_range,
+        phase_kurtosis,
         # Advanced correlation features
         mag_corr, phase_corr,
         phase_diff_mean,
-        # Spatial context features
+        # Frequency domain features
+        freq_mean, freq_std, freq_max,
+        # Subcarrier group statistics
+        mag_group_means, phase_group_means,
+        # Enhanced spatial context features
         coordinates,
-        zone_features
+        # Zone-based features
+        zone_features,
+        zone_x_means.reshape(-1, 1),
+        zone_y_means.reshape(-1, 1),
+        zone_distances.reshape(-1, 1),
+        zone_mag_corr,
+        zone_phase_corr
     ])
     
     # Log combined feature information
@@ -376,16 +464,15 @@ def train_room_classifier(
     y_train_encoded = le.fit_transform(y_train)
     y_val_encoded = le.transform(y_val)
     
-    # Create zone-based features
-    n_zones = len(np.unique(np.concatenate([train_zones, val_zones])))
-    train_zone_features = np.zeros((len(train_zones), n_zones))
-    val_zone_features = np.zeros((len(val_zones), n_zones))
-    train_zone_features[np.arange(len(train_zones)), train_zones] = 1
-    val_zone_features[np.arange(len(val_zones)), val_zones] = 1
+    # Use features as-is since zone features are already included
+    X_train_with_zones = X_train.copy()
+    X_val_with_zones = X_val.copy()
     
-    # Combine original features with zone features
-    X_train_with_zones = np.hstack([X_train, train_zone_features])
-    X_val_with_zones = np.hstack([X_val, val_zone_features])
+    # Log feature dimensions for debugging
+    logger.info(f"\nFeature dimensions in room classifier:")
+    logger.info(f"Training features: {X_train_with_zones.shape}")
+    logger.info(f"Validation features: {X_val_with_zones.shape}")
+    logger.info(f"Zone information shape - train: {train_zones.shape}, val: {val_zones.shape}")
     
     # Enhanced feature engineering with zone awareness
     
@@ -443,14 +530,16 @@ def train_room_classifier(
             return 'A' + room[1]
         return room[0]
     
-    # Enhanced data augmentation
+    # Enhanced data augmentation with zone tracking
     X_train_aug = []
     y_train_aug = []
+    zones_aug = []  # Track zones for augmented data
     
     for i in range(len(X_train_pca)):
         # Original sample
         X_train_aug.append(X_train_pca[i])
         y_train_aug.append(y_train_encoded[i])
+        zones_aug.append(train_zones[i])
         
         # Add multiple perturbed versions with varying noise levels
         for noise_scale in [0.01, 0.02, 0.03]:  # Multiple noise scales
@@ -458,11 +547,24 @@ def train_room_classifier(
                 noise = np.random.normal(0, noise_scale, X_train_pca[i].shape)
                 X_train_aug.append(X_train_pca[i] + noise)
                 y_train_aug.append(y_train_encoded[i])
+                zones_aug.append(train_zones[i])  # Use same zone as original sample
     
     X_train_aug = np.array(X_train_aug)
     y_train_aug = np.array(y_train_aug)
+    zones_aug = np.array(zones_aug)
     
     logger.info(f"\nAugmented training set size: {len(X_train_aug)} (original: {len(X_train_pca)})")
+    
+    # Compute sample weights based on augmented zone distribution
+    zone_counts = np.bincount(zones_aug)
+    sample_weights = np.ones(len(X_train_aug))
+    for zone in range(len(zone_counts)):
+        zone_mask = zones_aug == zone
+        if np.sum(zone_mask) > 0:
+            sample_weights[zone_mask] = 1.0 / zone_counts[zone]
+    
+    # Normalize weights
+    sample_weights = sample_weights / np.sum(sample_weights) * len(sample_weights)
     
     # Train a single Random Forest classifier with optimized parameters
     section_clf = RandomForestClassifier(
@@ -479,22 +581,22 @@ def train_room_classifier(
     
     # Train Random Forest with zone-aware parameters
     room_clf = RandomForestClassifier(
-        n_estimators=1000,
-        max_depth=None,  # Allow deeper trees to capture zone relationships
-        min_samples_split=2,
-        min_samples_leaf=1,
-        class_weight='balanced_subsample',  # Better handling of imbalanced zones
-        max_features='sqrt',
+        n_estimators=2000,           # Increased for better convergence
+        max_depth=40,                # Set explicit depth for better control
+        min_samples_split=2,         # Keep low to capture rare patterns
+        min_samples_leaf=1,          # Allow single-sample leaves
+        class_weight='balanced',     # Changed from balanced_subsample for more stable weights
+        max_features=0.5,           # Use 50% of features
         bootstrap=True,
-        oob_score=True,  # Enable out-of-bag score estimation
+        oob_score=True,             # Enable out-of-bag score estimation
         n_jobs=-1,
         random_state=42
     )
     
-    # Train on augmented data
-    room_clf.fit(X_train_aug, y_train_aug)
+    # Train with precomputed sample weights
+    room_clf.fit(X_train_aug, y_train_aug, sample_weight=sample_weights)
     
-    # Analyze feature importance with zone context
+    # Analyze feature importance with enhanced zone context
     importances = room_clf.feature_importances_
     indices = np.argsort(importances)[::-1]
     
@@ -544,7 +646,7 @@ def train_coordinate_regressor(
     val_zones: np.ndarray
 ) -> tuple:
     """
-    Train a random forest regressor for space ID prediction with zone awareness.
+    Train zone-specific random forest regressors for coordinate prediction.
     
     Args:
         X_train, X_val: Training and validation features
@@ -552,24 +654,20 @@ def train_coordinate_regressor(
         train_zones, val_zones: Zone information for spatial context
         
     Returns:
-        tuple: (trained_model, scaler, validation_mse)
+        tuple: (trained_models_dict, scaler, validation_mse)
     """
-    # Create zone-based features
-    n_zones = len(np.unique(np.concatenate([train_zones, val_zones])))
-    train_zone_features = np.zeros((len(train_zones), n_zones))
-    val_zone_features = np.zeros((len(val_zones), n_zones))
-    train_zone_features[np.arange(len(train_zones)), train_zones] = 1
-    val_zone_features[np.arange(len(val_zones)), val_zones] = 1
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.preprocessing import StandardScaler
+    import numpy as np
+    # Use features as-is since zone features are already included
+    X_train_with_zones = X_train.copy()
+    X_val_with_zones = X_val.copy()
     
-    # Combine original features with zone features
-    X_train_with_zones = np.hstack([X_train, train_zone_features])
-    X_val_with_zones = np.hstack([X_val, val_zone_features])
-    
-    # Log feature dimensions
+    # Log feature dimensions for debugging
     logger.info("\nRegressor Feature Dimensions:")
-    logger.info(f"CSI features: {X_train.shape[1]}")
-    logger.info(f"Zone features: {n_zones}")
-    logger.info(f"Total features: {X_train_with_zones.shape[1]}")
+    logger.info(f"Training features: {X_train_with_zones.shape}")
+    logger.info(f"Validation features: {X_val_with_zones.shape}")
+    logger.info(f"Zone information shape - train: {train_zones.shape}, val: {val_zones.shape}")
     
     # Scale features (excluding one-hot encoded zone features)
     scaler = StandardScaler()
@@ -589,49 +687,106 @@ def train_coordinate_regressor(
     X_train_scaled = np.hstack([X_train_csi_scaled, X_train_zones])
     X_val_scaled = np.hstack([X_val_csi_scaled, X_val_zones])
     
-    # Train zone-aware regressor
-    reg = RandomForestRegressor(
-        n_estimators=500,  # Increased trees for better generalization
-        max_depth=None,
-        min_samples_split=2,
-        min_samples_leaf=1,
-        max_features='sqrt',
-        bootstrap=True,
-        n_jobs=-1,
-        random_state=42
-    )
+    # Train zone-specific regressors
+    zone_regressors = {}
+    zone_scalers = {}
+    zone_mse = {}
     
-    # Verify feature alignment
-    if len(space_ids_train) != X_train_scaled.shape[0]:
-        raise ValueError(f"Training feature-label mismatch: {X_train_scaled.shape[0]} samples but {len(space_ids_train)} labels")
-    if len(space_ids_val) != X_val_scaled.shape[0]:
-        raise ValueError(f"Validation feature-label mismatch: {X_val_scaled.shape[0]} samples but {len(space_ids_val)} labels")
+    # Get unique zones
+    unique_zones = np.unique(np.concatenate([train_zones, val_zones]))
     
-    reg.fit(X_train_scaled, space_ids_train)
+    for zone in unique_zones:
+        # Get zone-specific data
+        train_mask = train_zones == zone
+        val_mask = val_zones == zone
+        
+        if np.sum(train_mask) > 0 and np.sum(val_mask) > 0:
+            # Create and fit zone-specific scaler
+            zone_scaler = StandardScaler()
+            X_train_zone = zone_scaler.fit_transform(X_train_scaled[train_mask])
+            X_val_zone = zone_scaler.transform(X_val_scaled[val_mask])
+            
+            # Initialize zone-specific regressor with optimized hyperparameters
+            zone_reg = RandomForestRegressor(
+                n_estimators=1000,    # Increased for better convergence
+                max_depth=20,         # Limit depth to prevent overfitting
+                min_samples_split=5,  # More samples required for splitting
+                min_samples_leaf=2,   # More samples in leaves for stability
+                max_features=0.3,     # Use 30% of features for better generalization
+                bootstrap=True,
+                oob_score=True,      # Enable out-of-bag score estimation
+                n_jobs=-1,
+                random_state=42
+            )
+            
+            # Compute sample weights based on distance to zone centroid
+            train_weights = 1.0 / (1.0 + X_train_zone[:, -1])  # Using distance feature
+            train_weights = train_weights / np.sum(train_weights) * len(train_weights)
+            
+            # Train zone-specific regressor
+            zone_reg.fit(X_train_zone, space_ids_train[train_mask], 
+                        sample_weight=train_weights)
+            
+            # Store zone-specific models and metrics
+            zone_regressors[zone] = zone_reg
+            zone_scalers[zone] = zone_scaler
+            
+            # Calculate zone-specific MSE
+            y_pred_zone = zone_reg.predict(X_val_zone)
+            zone_mse[zone] = mean_squared_error(
+                space_ids_val[val_mask], 
+                y_pred_zone
+            )
+            
+            logger.info(f"\nZone {zone} Regressor:")
+            logger.info(f"Training samples: {np.sum(train_mask)}")
+            logger.info(f"Validation samples: {np.sum(val_mask)}")
+            logger.info(f"MSE: {zone_mse[zone]:.4f}")
     
-    # Evaluate overall and by zone
-    y_pred = reg.predict(X_val_scaled)
-    mse = mean_squared_error(space_ids_val, y_pred)
+    # Verify all zones have models
+    if not zone_regressors:
+        raise ValueError("No zone-specific regressors could be trained")
     
+    # Calculate overall MSE
+    all_predictions = []
+    all_true_values = []
+    
+    for zone in unique_zones:
+        val_mask = val_zones == zone
+        if zone in zone_regressors and np.sum(val_mask) > 0:
+            X_val_zone = zone_scalers[zone].transform(X_val_scaled[val_mask])
+            zone_predictions = zone_regressors[zone].predict(X_val_zone)
+            
+            all_predictions.extend(zone_predictions)
+            all_true_values.extend(space_ids_val[val_mask])
+    
+    overall_mse = mean_squared_error(all_true_values, all_predictions)
+    
+    # Log results
     logger.info("\nSpace ID Regression Results:")
-    logger.info(f"Overall MSE: {mse:.4f}")
-    logger.info(f"Overall RMSE: {np.sqrt(mse):.4f}")
+    logger.info(f"Overall MSE: {overall_mse:.4f}")
+    logger.info(f"Overall RMSE: {np.sqrt(overall_mse):.4f}")
     
     # Analyze performance by zone
     logger.info("\nRegression performance by zone:")
-    for zone in np.unique(val_zones):
-        zone_mask = val_zones == zone
-        if np.sum(zone_mask) > 0:
-            zone_mse = mean_squared_error(
-                space_ids_val[zone_mask],
-                y_pred[zone_mask]
-            )
-            logger.info(f"Zone {zone}:")
-            logger.info(f"  MSE: {zone_mse:.4f}")
-            logger.info(f"  RMSE: {np.sqrt(zone_mse):.4f}")
-            logger.info(f"  Samples: {np.sum(zone_mask)}")
+    for zone, mse in zone_mse.items():
+        logger.info(f"Zone {zone}:")
+        logger.info(f"  MSE: {mse:.4f}")
+        logger.info(f"  RMSE: {np.sqrt(mse):.4f}")
+        logger.info(f"  Samples: {np.sum(val_zones == zone)}")
+        if zone in zone_regressors:
+            logger.info(f"  Top features: {zone_regressors[zone].feature_importances_[:5]}")
+            
+    logger.info(f"\nOverall MSE across all zones: {overall_mse:.4f}")
     
-    return reg, scaler, mse
+    # Create a dictionary to store scaling parameters
+    space_scaler = {
+        'mean': scaler.mean_,
+        'scale': scaler.scale_,
+        'zone_scalers': zone_scalers
+    }
+    
+    return zone_regressors, space_scaler, overall_mse
 
 if __name__ == "__main__":
     # Load reference data for training with spatial information
@@ -642,8 +797,19 @@ if __name__ == "__main__":
         location_info_path
     )
     
-    # Ensure consistent room number encoding
-    rooms_ref = np.array([str(r) for r in rooms_ref])
+    # Ensure consistent room number encoding and handle special cases
+    def clean_room_number(room):
+        # Convert to string and handle special cases
+        room_str = str(room).strip()
+        # Remove any trailing .0 from float conversions
+        if room_str.endswith('.0'):
+            room_str = room_str[:-2]
+        return room_str
+    
+    # Apply consistent room number encoding
+    rooms_ref = np.array([clean_room_number(r) for r in rooms_ref])
+    logger.info("\nUnique room numbers after cleaning:")
+    logger.info(np.unique(rooms_ref))
     
     # Create balanced train/validation split within each zone
     train_indices = []
@@ -653,8 +819,12 @@ if __name__ == "__main__":
     unique_rooms = np.unique(rooms_ref)
     unique_rooms.sort()
     
+    # Get actual number of zones from the data
+    n_zones = len(np.unique(zones_ref))
+    logger.info(f"\nNumber of zones detected: {n_zones}")
+    
     # Split rooms within each zone to maintain spatial distribution
-    for zone in range(5):  # Using 5 zones as configured
+    for zone in range(n_zones):
         zone_mask = zones_ref == zone
         zone_rooms = np.unique(rooms_ref[zone_mask])
         
@@ -670,7 +840,10 @@ if __name__ == "__main__":
             n_train = max(1, int(0.6 * n_samples))  # At least 1 sample for training
             
             # Randomly shuffle indices
-            np.random.seed(42 + hash(str(zone) + room))  # Different seed for each room
+            # Ensure seed is within valid range (0 to 2**32 - 1)
+            combined_str = f"{zone}_{room}"
+            seed_value = abs(hash(combined_str)) % (2**32 - 1)
+            np.random.seed(42 + seed_value)
             np.random.shuffle(room_indices)
             
             # Add to train/val sets
@@ -702,7 +875,8 @@ if __name__ == "__main__":
     
     # Print detailed zone distribution in split
     logger.info("\nZone distribution in split:")
-    for zone in range(5):  # Using 5 zones as configured
+    unique_zones = np.unique(np.concatenate([zones_train, zones_val]))
+    for zone in unique_zones:
         train_count = np.sum(zones_train == zone)
         val_count = np.sum(zones_val == zone)
         
@@ -743,10 +917,21 @@ if __name__ == "__main__":
         'mean': room_scaler.mean_,
         'scale': room_scaler.scale_
     })
-    np.save("models/space_scaler.npy", {
-        'mean': space_scaler.mean_,
-        'scale': space_scaler.scale_
-    })
+    
+    # Get number of actual zones from the data
+    unique_zones = np.unique(zones_ref)
+    n_actual_zones = len(unique_zones)
+    logger.info(f"\nSaving models for {n_actual_zones} zones")
+    
+    # Save zone-specific space scalers
+    space_scaler_data = {}
+    for zone in unique_zones:
+        if zone in space_scaler:
+            space_scaler_data[f'zone_{zone}'] = {
+                'mean': space_scaler[zone].mean_,
+                'scale': space_scaler[zone].scale_
+            }
+    np.save("models/space_scaler.npy", space_scaler_data)
     
     # Load test data and evaluate with spatial information
     test_features_path = "processed_features/test_features.npz"
@@ -759,7 +944,14 @@ if __name__ == "__main__":
     X_test_selected = selector.transform(X_test)
     X_test_room = room_scaler.transform(X_test_selected)
     X_test_room = pca.transform(X_test_room)
-    X_test_space = space_scaler.transform(X_test)
+    
+    # Apply zone-specific scaling to test data
+    X_test_space = np.zeros_like(X_test)
+    unique_test_zones = np.unique(zones_test)
+    for zone in unique_test_zones:
+        zone_mask = zones_test == zone
+        if zone in space_scaler and np.any(zone_mask):
+            X_test_space[zone_mask] = space_scaler[zone].transform(X_test[zone_mask])
     
     # Evaluate on test set
     rooms_test_encoded = label_encoder.transform(rooms_test)
@@ -776,12 +968,26 @@ if __name__ == "__main__":
     logger.info(f"Min confidence: {np.min(test_confidence_scores):.4f}")
     logger.info(f"Max confidence: {np.max(test_confidence_scores):.4f}")
     room_pred = label_encoder.inverse_transform(room_pred_encoded)
-    space_pred = space_reg.predict(X_test_space)
+    
+    # Make predictions using zone-specific regressors
+    space_pred = np.zeros_like(spaces_test)
+    for zone in unique_test_zones:
+        zone_mask = zones_test == zone
+        if zone in space_reg and np.any(zone_mask):
+            # Get predictions for this zone using the zone-specific regressor
+            zone_predictions = space_reg[zone].predict(X_test_space[zone_mask])
+            space_pred[zone_mask] = zone_predictions
     
     logger.info("\nTest Set Results:")
     logger.info("Room Classification Report:")
     logger.info(classification_report(rooms_test, room_pred))
     
-    test_mse = mean_squared_error(spaces_test, space_pred)
-    logger.info(f"Space ID Test MSE: {test_mse:.4f}")
-    logger.info(f"Space ID Test RMSE: {np.sqrt(test_mse):.4f}")
+    # Calculate MSE only for samples where we have predictions
+    valid_pred_mask = ~np.isnan(space_pred)
+    if np.any(valid_pred_mask):
+        test_mse = mean_squared_error(spaces_test[valid_pred_mask], space_pred[valid_pred_mask])
+        logger.info(f"Space ID Test MSE: {test_mse:.4f}")
+        logger.info(f"Space ID Test RMSE: {np.sqrt(test_mse):.4f}")
+        logger.info(f"Predictions made for {np.sum(valid_pred_mask)}/{len(valid_pred_mask)} samples")
+    else:
+        logger.warning("No valid predictions made for space IDs")
